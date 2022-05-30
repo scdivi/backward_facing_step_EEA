@@ -1,20 +1,20 @@
 #! /usr/bin/env python3
+# Adaptively refined backward step problem: quasi-incompressible.
 
 from nutils import mesh, function, solver
 from nutils.expression_v2 import Namespace
 import numpy, treelog, util
 
 # geometry parameters
-L = 4       # Length of total channel
-H = 1       # Height of wide channel
-l = 1       # Length of narrow channel
-h = 0.5     # Height of narrow channel
+L = 4        # Length of total channel
+H = 1        # Height of wide channel
+l = 1        # Length of narrow channel
+h = 0.5      # Height of narrow channel
 
 # FEM approximation parameters
-nelems  = 8   # Number of elements
-degree  = 2   # Polynomial degree
-nrefine = 5   # Number of refinement steps
-
+nelems  = 8  # Number of elements
+degree  = 2  # Polynomial degree
+nrefine = 10 # Number of refinement steps
 
 # construct geometry
 xverts = numpy.linspace(0,L,nelems+1)
@@ -35,15 +35,23 @@ with treelog.iter.fraction('level', range(nrefine)) as lrange:
     for irefine in lrange:
 
         if irefine:
-            domain = domain.refined
-            
+            # residual-based estimator
+            estimator  = res.eval(lhs=lhs)
+
+            # mask
+            mask   = estimator >= 0.8*max(estimator)
+
+            # tag elements and refine
+            refine = util.get_support_vector_basis(domain, ns.basis, mask)
+            domain = domain.refined_by(refine)
+
         # construct namespaces
         ns = Namespace()
         ns.x = geom
         ns.define_for('x', gradient='∇', normal='n', jacobians=('dV', 'dS'))
         ns.basis = domain.basis('h-std', degree=degree).vector(domain.ndims)
         ns.u = function.dotarg('lhs', ns.basis)
-        
+
         # parameters
         ns.μ     = 1e-3 
         ns.γ     = 500
@@ -52,24 +60,23 @@ with treelog.iter.fraction('level', range(nrefine)) as lrange:
         ns.δ     = function.eye(domain.ndims)
         ns.Σ     = function.ones([domain.ndims])
         ns.σ_ij  = 'μ (2 ε_ij + γ ∇_k(u_k) δ_ij)' 
-        
+
         # inlet velocity
         ns.umax  = .06
         ns.h     = .5
         ns.H     = H-.5
         ns.uinx  = 'umax (x_1 - h) ((H - (x_1 - h)) / ((H / 2)^2))'
-        ns.uin   = function.Array.cast([ns.uinx,0])
-        
+
         # constraints 
         sqr  = domain.boundary['trimmed,bottom,top'].integral('u_i u_i dS' @ ns, degree=degree*2)
-        sqr += domain.boundary['left'].integral('(u_i - uin_i) (u_i - uin_i) dS' @ ns, degree=degree*2)
+        sqr += domain.boundary['left'].integral('(u_0 - uinx) (u_0 - uinx) dS' @ ns, degree=degree*2)
         cons = solver.optimize('lhs', sqr, droptol=1e-15)
-        
+
         # residuals
         res  = domain.integral('2 μ ε_ij v_nij dV' @ ns, degree=degree*2)
         res += domain.integral('γ μ ∇_i(u_i) ∇_j(basis_nj) dV' @ ns, degree=degree*2)
         lhs  = solver.solve_linear('lhs', res, constrain=cons)
-        
+
         # number of degrees of freedom
         ndofs[irefine] = len(ns.basis)
         treelog.user(f'Number of DOFs: {ndofs[irefine]}')
