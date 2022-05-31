@@ -58,11 +58,10 @@ with treelog.iter.fraction('level', range(nrefine)) as lrange:
         ns.h     = .5
         ns.H     = H-.5
         ns.uinx  = 'umax (x_1 - h) ((H - (x_1 - h)) / ((H / 2)^2))'
-        ns.uin   = function.Array.cast([ns.uinx,0])
         
         # constraints 
         sqr  = domain.boundary['trimmed,bottom,top'].integral('u_i u_i dS' @ ns, degree=degree*2)
-        sqr += domain.boundary['left'].integral('(u_i - uin_i) (u_i - uin_i) dS' @ ns, degree=degree*2)
+        sqr += domain.boundary['left'].integral('(u_0 - uinx) (u_0 - uinx) dS' @ ns, degree=degree*2)
         cons = solver.optimize('lhs', sqr, droptol=1e-15)
         
         # residuals
